@@ -10,19 +10,16 @@ on:
 jobs:
   build-toolchain:
     runs-on: ubuntu-24.04
-    
+
     env:
-      # Absolute pins for target configuration
       TARGET: "x86_64-pc-linux-gnu"
       PREFIX: "/opt/cross-linux"
-      
-      # Fixed versions for absolute reproducibility
+
       BINUTILS_VER: "2.42"
       GCC_VER: "14.1.0"
       GLIBC_VER: "2.39"
       LINUX_VER: "6.8"
 
-      # Core flags to enforce bit-perfection and eliminate host entropy
       FIXED_SEED: "msys2linuxreproducible"
       GLOBAL_CFLAGS: "-O2 -frandom-seed=msys2linuxreproducible -fno-guess-branch-probability"
       GLOBAL_CXXFLAGS: "-O2 -frandom-seed=msys2linuxreproducible -fno-guess-branch-probability"
@@ -31,7 +28,27 @@ jobs:
       - name: "Checkout code"
         uses: actions/checkout@v4
 
+      # ---- Cache the FINAL built toolchain, keyed on all versions + flags ----
+      # If this hits, we skip every build step below entirely.
+      - name: "Cache built toolchain"
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PREFIX }}
+          key: toolchain-${{ runner.os }}-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}-${{ env.FIXED_SEED }}-v1
+
+      # ---- Cache downloaded+extracted sources separately ----
+      # Useful even on a toolchain cache miss (e.g. you bump GCC_VER but not the others).
+      - name: "Cache sources"
+        id: cache-sources
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: src
+          key: sources-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}
+
       - name: "Install System Build Dependencies"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -40,33 +57,39 @@ jobs:
             wget ca-certificates xz-utils
 
       - name: "Create Build Directories"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           sudo mkdir -p ${{ env.PREFIX }}
           sudo chown -R $USER:$USER ${{ env.PREFIX }}
           mkdir -p src build/binutils build/gcc-stage1 build/glibc build/gcc-final
 
       - name: "Download Component Sources"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true' && steps.cache-sources.outputs.cache-hit != 'true'
         run: |
           cd src
-          # FIXED: Switched to official, valid source mirrors with correct path syntax
-          wget -q https://gnu.org{{ env.BINUTILS_VER }}.tar.xz
-          wget -q https://gnu.org{{ env.GCC_VER }}/gcc-${{ env.GCC_VER }}.tar.xz
-          wget -q https://gnu.org{{ env.GLIBC_VER }}.tar.xz
-          wget -q https://kernel.org{{ env.LINUX_VER }}.tar.xz
-          
-          # Unpack everything uniformly
+          # Correct GNU/kernel mirror paths (previous URLs were malformed and 404'd)
+          wget -q "https://ftp.gnu.org/gnu/binutils/binutils-${{ env.BINUTILS_VER }}.tar.xz"
+          wget -q "https://ftp.gnu.org/gnu/gcc/gcc-${{ env.GCC_VER }}/gcc-${{ env.GCC_VER }}.tar.xz"
+          wget -q "https://ftp.gnu.org/gnu/glibc/glibc-${{ env.GLIBC_VER }}.tar.xz"
+          wget -q "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.LINUX_VER }}.tar.xz"
+
           tar -xf binutils-${{ env.BINUTILS_VER }}.tar.xz
           tar -xf gcc-${{ env.GCC_VER }}.tar.xz
           tar -xf glibc-${{ env.GLIBC_VER }}.tar.xz
           tar -xf linux-${{ env.LINUX_VER }}.tar.xz
 
+          # GCC needs its prerequisite libs (gmp/mpfr/mpc/isl) - download once, cached with src
+          cd gcc-${{ env.GCC_VER }}
+          ./contrib/download_prerequisites
+
       - name: "Install Linux Kernel Headers"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           cd src/linux-${{ env.LINUX_VER }}
-          # Installs headers directly to sysroot root
           make headers_install ARCH=x86_64 INSTALL_HDR_PATH=${{ env.PREFIX }}/${{ env.TARGET }}
 
       - name: "Build GNU Binutils (Deterministic)"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           cd build/binutils
           export CFLAGS="${{ env.GLOBAL_CFLAGS }}"
@@ -82,6 +105,7 @@ jobs:
           make install
 
       - name: "Build GCC Stage 1 (Bootstrap)"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           export PATH="${{ env.PREFIX }}/bin:$PATH"
           cd build/gcc-stage1
@@ -104,6 +128,7 @@ jobs:
           make install-gcc install-target-libgcc
 
       - name: "Build GLIBC"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           export PATH="${{ env.PREFIX }}/bin:$PATH"
           cd build/glibc
@@ -120,6 +145,7 @@ jobs:
           make install_root=${{ env.PREFIX }}/${{ env.TARGET }} install
 
       - name: "Build Final GCC Stage 2"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           export PATH="${{ env.PREFIX }}/bin:$PATH"
           cd build/gcc-final
@@ -141,20 +167,14 @@ jobs:
       - name: "Verify Artifact Determinism"
         run: |
           export PATH="${{ env.PREFIX }}/bin:$PATH"
-          # FIXED: Updated void main to int main to comply with GCC 14 standards
           echo "int main(){ return 0; }" > test.c
-          
-          # Build binary 1
+
           ${{ env.TARGET }}-gcc -O2 -frandom-seed=${{ env.FIXED_SEED }} -fdebug-prefix-map=$(pwd)=. -Wl,--build-id=none test.c -o output1.bin
-          
-          # Build binary 2
           ${{ env.TARGET }}-gcc -O2 -frandom-seed=${{ env.FIXED_SEED }} -fdebug-prefix-map=$(pwd)=. -Wl,--build-id=none test.c -o output2.bin
-          
-          # Generate hashes
+
           sha256sum output1.bin
           sha256sum output2.bin
-          
-          # Hard assert that both files are bit-perfect identical
+
           cmp --silent output1.bin output2.bin && echo "SUCCESS: Bit-perfect match achieved!" || (echo "ERROR: Mismatched hashes" && exit 1)
 
       - name: "Package Toolchain Artifact"
@@ -162,7 +182,6 @@ jobs:
           tar -czf x86_64-glibc-linux-toolchain.tar.gz -C /opt cross-linux
 
       - name: "Upload Toolchain"
-        # FIXED: Corrected action name from actions/artifacts@v4 to actions/upload-artifact@v4
         uses: actions/upload-artifact@v4
         with:
           name: bit-perfect-linux-toolchain
