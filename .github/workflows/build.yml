@@ -12,17 +12,14 @@ jobs:
     runs-on: ubuntu-24.04
     
     env:
-      # Absolute pins for target configuration
       TARGET: "x86_64-pc-linux-gnu"
       PREFIX: "/opt/cross-linux"
       
-      # Fixed versions for absolute reproducibility
       BINUTILS_VER: "2.42"
       GCC_VER: "14.1.0"
       GLIBC_VER: "2.39"
       LINUX_VER: "6.8"
 
-      # Core flags to enforce bit-perfection and eliminate host entropy
       FIXED_SEED: "msys2linuxreproducible"
       GLOBAL_CFLAGS: "-O2 -frandom-seed=msys2linuxreproducible -fno-guess-branch-probability"
       GLOBAL_CXXFLAGS: "-O2 -frandom-seed=msys2linuxreproducible -fno-guess-branch-probability"
@@ -50,10 +47,9 @@ jobs:
           cd src
           wget -q https://gnu.org{{ env.BINUTILS_VER }}.tar.xz
           wget -q https://gnu.org{{ env.GCC_VER }}/gcc-${{ env.GCC_VER }}.tar.xz
-          wget -q https://gnu.org{{ env.GLIBC_VER }}/glibc-${{ env.GLIBC_VER }}.tar.xz
+          wget -q https://gnu.org{{ env.GLIBC_VER }}.tar.xz
           wget -q https://kernel.org{{ env.LINUX_VER }}.tar.xz
           
-          # Unpack everything uniformly
           tar -xf binutils-${{ env.BINUTILS_VER }}.tar.xz
           tar -xf gcc-${{ env.GCC_VER }}.tar.xz
           tar -xf glibc-${{ env.GLIBC_VER }}.tar.xz
@@ -62,6 +58,7 @@ jobs:
       - name: "Install Linux Kernel Headers"
         run: |
           cd src/linux-${{ env.LINUX_VER }}
+          # Installed directly into the sysroot target root to align with standard toolchain layouts
           make headers_install ARCH=x86_64 INSTALL_HDR_PATH=${{ env.PREFIX }}/${{ env.TARGET }}
 
       - name: "Build GNU Binutils (Deterministic)"
@@ -112,7 +109,7 @@ jobs:
             --host=${{ env.TARGET }} \
             --build=$(../../src/glibc-${{ env.GLIBC_VER }}/scripts/config.guess) \
             --prefix=/usr \
-            --with-headers=${{ env.PREFIX }}/${{ env.TARGET }}/usr/include \
+            --with-headers=${{ env.PREFIX }}/${{ env.TARGET }}/include \
             libc_cv_forced_unwind=yes
           make -j$(nproc)
           make install_root=${{ env.PREFIX }}/${{ env.TARGET }} install
@@ -139,7 +136,7 @@ jobs:
       - name: "Verify Artifact Determinism"
         run: |
           export PATH="${{ env.PREFIX }}/bin:$PATH"
-          echo "void main(){}" > test.c
+          echo "int main(){ return 0; }" > test.c
           
           # Build binary 1
           ${{ env.TARGET }}-gcc -O2 -frandom-seed=${{ env.FIXED_SEED }} -fdebug-prefix-map=$(pwd)=. -Wl,--build-id=none test.c -o output1.bin
@@ -159,7 +156,7 @@ jobs:
           tar -czf x86_64-glibc-linux-toolchain.tar.gz -C /opt cross-linux
 
       - name: "Upload Toolchain"
-        uses: actions/artifacts@v4
+        uses: actions/upload-artifact@v4
         with:
           name: bit-perfect-linux-toolchain
           path: x86_64-glibc-linux-toolchain.tar.gz
