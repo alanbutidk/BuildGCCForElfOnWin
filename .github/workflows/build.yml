@@ -123,6 +123,7 @@ jobs:
             --disable-libgomp \
             --disable-libatomic \
             --without-headers \
+            --disable-multilib \
             --enable-deterministic-archives
           make -j$(nproc) all-gcc all-target-libgcc
           make install-gcc install-target-libgcc
@@ -158,6 +159,7 @@ jobs:
             --enable-languages=c,c++ \
             --enable-shared \
             --enable-threads=posix \
+            --disable-multilib \
             --enable-deterministic-archives \
             --disable-nls \
             --disable-werror
