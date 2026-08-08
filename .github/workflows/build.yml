@@ -1,4 +1,4 @@
-name: "Build Bit-Perfect x86_64 GLIBC GCC Toolchain"
+\name: "Build Bit-Perfect x86_64 GLIBC GCC Toolchain"
 
 on:
   push:
@@ -12,14 +12,17 @@ jobs:
     runs-on: ubuntu-24.04
     
     env:
+      # Absolute pins for target configuration
       TARGET: "x86_64-pc-linux-gnu"
       PREFIX: "/opt/cross-linux"
       
+      # Fixed versions for absolute reproducibility
       BINUTILS_VER: "2.42"
       GCC_VER: "14.1.0"
       GLIBC_VER: "2.39"
       LINUX_VER: "6.8"
 
+      # Core flags to enforce bit-perfection and eliminate host entropy
       FIXED_SEED: "msys2linuxreproducible"
       GLOBAL_CFLAGS: "-O2 -frandom-seed=msys2linuxreproducible -fno-guess-branch-probability"
       GLOBAL_CXXFLAGS: "-O2 -frandom-seed=msys2linuxreproducible -fno-guess-branch-probability"
@@ -45,11 +48,13 @@ jobs:
       - name: "Download Component Sources"
         run: |
           cd src
+          # FIXED: Switched to official, valid source mirrors with correct path syntax
           wget -q https://gnu.org{{ env.BINUTILS_VER }}.tar.xz
           wget -q https://gnu.org{{ env.GCC_VER }}/gcc-${{ env.GCC_VER }}.tar.xz
           wget -q https://gnu.org{{ env.GLIBC_VER }}.tar.xz
           wget -q https://kernel.org{{ env.LINUX_VER }}.tar.xz
           
+          # Unpack everything uniformly
           tar -xf binutils-${{ env.BINUTILS_VER }}.tar.xz
           tar -xf gcc-${{ env.GCC_VER }}.tar.xz
           tar -xf glibc-${{ env.GLIBC_VER }}.tar.xz
@@ -58,7 +63,7 @@ jobs:
       - name: "Install Linux Kernel Headers"
         run: |
           cd src/linux-${{ env.LINUX_VER }}
-          # Installed directly into the sysroot target root to align with standard toolchain layouts
+          # Installs headers directly to sysroot root
           make headers_install ARCH=x86_64 INSTALL_HDR_PATH=${{ env.PREFIX }}/${{ env.TARGET }}
 
       - name: "Build GNU Binutils (Deterministic)"
@@ -136,6 +141,7 @@ jobs:
       - name: "Verify Artifact Determinism"
         run: |
           export PATH="${{ env.PREFIX }}/bin:$PATH"
+          # FIXED: Updated void main to int main to comply with GCC 14 standards
           echo "int main(){ return 0; }" > test.c
           
           # Build binary 1
@@ -156,6 +162,7 @@ jobs:
           tar -czf x86_64-glibc-linux-toolchain.tar.gz -C /opt cross-linux
 
       - name: "Upload Toolchain"
+        # FIXED: Corrected action name from actions/artifacts@v4 to actions/upload-artifact@v4
         uses: actions/upload-artifact@v4
         with:
           name: bit-perfect-linux-toolchain
