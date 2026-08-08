@@ -1,4 +1,4 @@
-\name: "Build Bit-Perfect x86_64 GLIBC GCC Toolchain"
+name: "Build Bit-Perfect x86_64 GLIBC GCC Toolchain"
 
 on:
   push:
