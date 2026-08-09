@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PREFIX }}
-          key: toolchain-${{ runner.os }}-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}-${{ env.FIXED_SEED }}-v2
+          key: toolchain-${{ runner.os }}-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}-${{ env.FIXED_SEED }}-v3
 
       # ---- Cache downloaded+extracted sources separately ----
       # Useful even on a toolchain cache miss (e.g. you bump GCC_VER but not the others).
@@ -85,7 +85,7 @@ jobs:
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           cd src/linux-${{ env.LINUX_VER }}
-          make headers_install ARCH=x86_64 INSTALL_HDR_PATH=${{ env.PREFIX }}/${{ env.TARGET }}
+          make headers_install ARCH=x86_64 INSTALL_HDR_PATH=${{ env.PREFIX }}/${{ env.TARGET }}/usr
 
       - name: "Build GNU Binutils (Deterministic)"
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
@@ -147,7 +147,7 @@ jobs:
             --host=${{ env.TARGET }} \
             --build=$(../../src/glibc-${{ env.GLIBC_VER }}/scripts/config.guess) \
             --prefix=/usr \
-            --with-headers=${{ env.PREFIX }}/${{ env.TARGET }}/include \
+            --with-headers=${{ env.PREFIX }}/${{ env.TARGET }}/usr/include \
             libc_cv_forced_unwind=yes
           make -j$(nproc)
           make install_root=${{ env.PREFIX }}/${{ env.TARGET }} install
