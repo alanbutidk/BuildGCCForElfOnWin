@@ -127,7 +127,10 @@ jobs:
             --enable-deterministic-archives
           make -j$(nproc) all-gcc all-target-libgcc
           make install-gcc install-target-libgcc
-
+      - name: "Dump libgcc config.log on failure"
+        if: failure()
+        run: |
+          find build/gcc-stage1 -name 'config.log' -exec echo "=== {} ===" \; -exec tail -100 {} \;
       - name: "Build GLIBC"
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
