@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PREFIX }}
-          key: toolchain-${{ runner.os }}-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}-${{ env.FIXED_SEED }}-v1
+          key: toolchain-${{ runner.os }}-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}-${{ env.FIXED_SEED }}-v2
 
       # ---- Cache downloaded+extracted sources separately ----
       # Useful even on a toolchain cache miss (e.g. you bump GCC_VER but not the others).
@@ -67,7 +67,6 @@ jobs:
         if: steps.cache-toolchain.outputs.cache-hit != 'true' && steps.cache-sources.outputs.cache-hit != 'true'
         run: |
           cd src
-          # Correct GNU/kernel mirror paths (previous URLs were malformed and 404'd)
           wget -q "https://ftp.gnu.org/gnu/binutils/binutils-${{ env.BINUTILS_VER }}.tar.xz"
           wget -q "https://ftp.gnu.org/gnu/gcc/gcc-${{ env.GCC_VER }}/gcc-${{ env.GCC_VER }}.tar.xz"
           wget -q "https://ftp.gnu.org/gnu/glibc/glibc-${{ env.GLIBC_VER }}.tar.xz"
@@ -104,6 +103,12 @@ jobs:
           make -j$(nproc)
           make install
 
+      # ---- Stage 1 is a freestanding, headers-less C-only bootstrap compiler. ----
+      # It must be C-only (no C++: libstdc++ needs a target libc that doesn't exist
+      # yet), and all-gcc/install-gcc must fully finish and be on PATH *before*
+      # all-target-libgcc's own configure runs against it - building them in one
+      # combined parallel `make` step is unreliable and was the actual cause of
+      # "configure: error: cannot compute suffix of object files: cannot compile".
       - name: "Build GCC Stage 1 (Bootstrap)"
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
@@ -125,12 +130,11 @@ jobs:
             --without-headers \
             --disable-multilib \
             --enable-deterministic-archives
-          make -j$(nproc) all-gcc all-target-libgcc
-          make install-gcc install-target-libgcc
-      - name: "Dump libgcc config.log on failure"
-        if: failure()
-        run: |
-          find build/gcc-stage1 -name 'config.log' -exec echo "=== {} ===" \; -exec tail -100 {} \;
+          make -j$(nproc) all-gcc
+          make install-gcc
+          make -j$(nproc) all-target-libgcc
+          make install-target-libgcc
+
       - name: "Build GLIBC"
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
@@ -169,13 +173,35 @@ jobs:
           make -j$(nproc)
           make install
 
+      # ---- Runs on ANY prior failure too, so a failed build still gives you ----
+      # a downloadable zip of every config.log plus the build tree layout,
+      # instead of having to copy/paste terminal output back and forth.
+      - name: "Collect debug logs on failure"
+        if: failure()
+        run: |
+          mkdir -p /tmp/debug-logs
+          find build -name 'config.log' -print0 \
+            | tar --null -czf /tmp/debug-logs/config-logs.tar.gz --files-from=-
+          find build -maxdepth 3 -type d > /tmp/debug-logs/build-tree.txt
+          ( cd /tmp/debug-logs && zip -r failure-logs.zip config-logs.tar.gz build-tree.txt )
+
+      - name: "Upload debug logs on failure"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-debug-logs
+          path: /tmp/debug-logs/failure-logs.zip
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: "Verify Artifact Determinism"
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
           export PATH="${{ env.PREFIX }}/bin:$PATH"
           echo "int main(){ return 0; }" > test.c
 
-          ${{ env.TARGET }}-gcc -O2 -frandom-seed=${{ env.FIXED_SEED }} -fdebug-prefix-map=$(pwd)=. -Wl,--build-id=none test.c -o output1.bin
-          ${{ env.TARGET }}-gcc -O2 -frandom-seed=${{ env.FIXED_SEED }} -fdebug-prefix-map=$(pwd)=. -Wl,--build-id=none test.c -o output2.bin
+          ${{ env.TARGET }}-gcc -O2 -frandom-seed=${{ env.FIXED_SEED }} -ffile-prefix-map=$(pwd)=. -Wl,--build-id=none test.c -o output1.bin
+          ${{ env.TARGET }}-gcc -O2 -frandom-seed=${{ env.FIXED_SEED }} -ffile-prefix-map=$(pwd)=. -Wl,--build-id=none test.c -o output2.bin
 
           sha256sum output1.bin
           sha256sum output2.bin
@@ -184,7 +210,7 @@ jobs:
 
       - name: "Package Toolchain Artifact"
         run: |
-          tar -czf x86_64-glibc-linux-toolchain.tar.gz -C /opt cross-linux
+          tar -czf x86_64-glibc-linux-toolchain.tar.gz -C "$(dirname ${{ env.PREFIX }})" "$(basename ${{ env.PREFIX }})"
 
       - name: "Upload Toolchain"
         uses: actions/upload-artifact@v4
