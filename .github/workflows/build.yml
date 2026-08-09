@@ -115,7 +115,7 @@ jobs:
             --target=${{ env.TARGET }} \
             --prefix=${{ env.PREFIX }} \
             --with-sysroot=${{ env.PREFIX }}/${{ env.TARGET }} \
-            --enable-languages=c,c++ \
+            --enable-languages=c \
             --disable-shared \
             --disable-threads \
             --disable-libssp \
