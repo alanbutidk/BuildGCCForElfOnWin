@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.PREFIX }}
-          key: toolchain-${{ runner.os }}-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}-${{ env.FIXED_SEED }}-v3
+          key: toolchain-${{ runner.os }}-bu${{ env.BINUTILS_VER }}-gcc${{ env.GCC_VER }}-glibc${{ env.GLIBC_VER }}-linux${{ env.LINUX_VER }}-${{ env.FIXED_SEED }}-v4
 
       # ---- Cache downloaded+extracted sources separately ----
       # Useful even on a toolchain cache miss (e.g. you bump GCC_VER but not the others).
@@ -132,7 +132,14 @@ jobs:
             --enable-deterministic-archives
           make -j$(nproc) all-gcc
           make install-gcc
-          make -j$(nproc) all-target-libgcc
+          # --without-headers alone isn't enough here: with the target sysroot's
+          # kernel (uapi) headers already installed for fixincludes/glibc's sake,
+          # libgcc's own build no longer auto-detects a true no-libc bootstrap and
+          # tries to compile libc-dependent sources (e.g. generic-morestack.c),
+          # which fail with "stdio.h: No such file or directory" since glibc's own
+          # headers don't exist yet. Force inhibit_libc explicitly instead of
+          # relying on that autodetection.
+          make -j$(nproc) all-target-libgcc CFLAGS_FOR_TARGET="-g -O2 -Dinhibit_libc"
           make install-target-libgcc
 
       - name: "Build GLIBC"
